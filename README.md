@@ -28,6 +28,30 @@ Como a base do DATASUS contém dados médicos reais de mais de 165 mil pacientes
 **Pré-requisitos:** Python 3.10+ e uma chave de API do Google AI Studio.
 
 1. Clone o repositório:
-   ```bash
-   git clone [https://github.com/SEU-USUARIO/indicium-healthcare-ai-poc.git](https://github.com/SEU-USUARIO/indicium-healthcare-ai-poc.git)
-   cd indicium-healthcare-ai-poc
+```bash
+git clone [https://github.com/SEU-USUARIO/indicium-healthcare-ai-poc.git](https://github.com/SEU-USUARIO/indicium-healthcare-ai-poc.git)
+cd indicium-healthcare-ai-poc
+```
+
+2. Instale as dependências: 
+```bash
+pip install langchain langgraph langchain-google-genai duckduckgo-search matplotlib pandas duckdb
+```
+
+3. Defina sua chave de API no terminal:
+```bash
+export GOOGLE_API_KEY="sua-chave-aqui"
+```
+
+4. Execute o orquestrador:
+```bash
+python main.py
+```
+
+## 📊 Entregáveis Gerados
+Ao executar, o Agente salvará localmente os gráficos e imprimirá um relatório executivo contendo:
+* Taxa de Ocupação de UTI
+* Taxa de Mortalidade
+* Cobertura Vacinal
+* Aumento/Queda de Casos (vs período anterior)
+* Análise de Contexto Integrada
