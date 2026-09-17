@@ -216,3 +216,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ==========================================
+# Ignorando Arquivos de Dados e Banco de Dados Local (PoC DATASUS)
+# ==========================================
+# Ignorar arquivos CSV brutos (pesados)
+*.csv
+
+# Ignorar o banco de dados SQLite gerado localmente
+*.db
+srag_dados.db
+*.sqlite
