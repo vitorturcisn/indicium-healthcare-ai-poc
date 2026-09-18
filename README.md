@@ -14,7 +14,7 @@ A orquestração do agente foi desenvolvida utilizando a biblioteca **LangGraph*
 2. **Chart Tool (`gerar_graficos`):** Função estática em Matplotlib acionada para gerar a série temporal dos últimos 30 dias e 12 meses.
 3. **Search Tool (`buscar_noticias`):** Integração com DuckDuckGo (DDGS) para capturar o contexto atual das redes hospitalares e embasar a análise qualitativa do relatório.
 
-*(O Diagrama Arquitetural em PDF pode ser encontrado na raiz deste repositório).*
+*(O Diagrama Arquitetural do fluxo lógico pode ser visualizado no arquivo `diagrama_arquitetura.png` na raiz deste repositório).*
 
 ## 🛡️ Governança e Tratamento de Dados Sensíveis
 Como a base do DATASUS contém dados médicos reais de mais de 165 mil pacientes por ano, implementou-se uma rotina de Engenharia de Dados estrita (Clean Data):
@@ -45,11 +45,11 @@ export GOOGLE_API_KEY="sua-chave-aqui"
 
 4. Execute o orquestrador:
 ```bash
-python main.py
+python indicium_healthcare_ai_poc.py
 ```
 
 ## 📊 Entregáveis Gerados
-Ao executar, o Agente salvará localmente os gráficos e imprimirá um relatório executivo contendo:
+Ao executar a solução, o Agente salva localmente os gráficos de série temporal e redige o relatório executivo (disponível para consulta em `relatorio_final.md`) contendo as seguintes métricas analisadas:
 * Taxa de Ocupação de UTI
 * Taxa de Mortalidade
 * Cobertura Vacinal
