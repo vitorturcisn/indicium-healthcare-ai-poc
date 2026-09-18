@@ -1,1 +1,0 @@
-Nenhum alerta recente encontrado em fontes oficiais.
