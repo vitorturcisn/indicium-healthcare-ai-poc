@@ -14,7 +14,7 @@ A orquestração do agente foi desenvolvida utilizando a biblioteca **LangGraph*
 2. **Chart Tool (`gerar_graficos`):** Função estática em Matplotlib acionada para gerar a série temporal dos últimos 30 dias e 12 meses.
 3. **Search Tool (`buscar_noticias`):** Integração com DuckDuckGo (DDGS) para capturar o contexto atual das redes hospitalares e embasar a análise qualitativa do relatório.
 
-*(O Diagrama Arquitetural do fluxo lógico pode ser visualizado no arquivo `diagrama_arquitetura.png` na raiz deste repositório).*
+*(O Diagrama Arquitetural do fluxo lógico pode ser visualizado no arquivo `diagrama_arquitetura.pdf` na raiz deste repositório).*
 
 ## 🛡️ Governança e Tratamento de Dados Sensíveis
 Como a base do DATASUS contém dados médicos reais de mais de 165 mil pacientes por ano, implementou-se uma rotina de Engenharia de Dados estrita (Clean Data):
