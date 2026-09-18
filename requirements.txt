@@ -1,0 +1,8 @@
+langchain
+langgraph
+langchain-google-genai
+duckduckgo-search
+matplotlib
+pandas
+duckdb
+graphviz
