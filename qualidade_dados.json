@@ -1,0 +1,29 @@
+{
+  "total_registros_brutos": 548669,
+  "total_registros_com_data_valida": 548669,
+  "registros_excluidos_por_data_invalida": 0,
+  "duplicidades_exatas_na_base_minimizada": 528649,
+  "variaveis": {
+    "UTI": {
+      "conhecidos": 489514,
+      "nulos": 54223,
+      "codigo_9_desconhecido": 4932,
+      "outros_valores_fora_do_dominio": 0,
+      "completude_percentual": 89.22
+    },
+    "EVOLUCAO": {
+      "conhecidos": 478451,
+      "nulos": 45554,
+      "codigo_9_desconhecido": 10586,
+      "outros_valores_fora_do_dominio": 14078,
+      "completude_percentual": 87.2
+    },
+    "VACINA_COV": {
+      "conhecidos": 542501,
+      "nulos": 65,
+      "codigo_9_desconhecido": 6103,
+      "outros_valores_fora_do_dominio": 0,
+      "completude_percentual": 98.88
+    }
+  }
+}
