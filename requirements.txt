@@ -1,8 +1,7 @@
-langchain
-langgraph
-langchain-google-genai
-duckduckgo-search
-matplotlib
 pandas
-duckdb
+matplotlib
+langchain-core
+langchain-google-genai
+langgraph
+ddgs
 graphviz
