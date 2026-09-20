@@ -27,13 +27,11 @@ from langchain_core.messages import (
     AnyMessage,
     HumanMessage,
     SystemMessage,
-    ToolMessage,
 )
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode
 
 # Compatibilidade com versões diferentes do pacote de busca.
 try:
@@ -46,7 +44,7 @@ except ImportError:
 
 
 APP_NAME = "indicium-healthcare-ai-poc"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
 
@@ -62,6 +60,8 @@ ALLOWED_NEWS_DOMAINS = (
 
 NEWS_TIME_LIMIT = os.getenv("NEWS_TIME_LIMIT", "m")
 MAX_NEWS_RESULTS = 3
+
+
 
 
 MAX_NEWS_SNIPPET_LENGTH = 800
@@ -105,6 +105,8 @@ logger = logging.getLogger(APP_NAME)
 class AgentState(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], add_messages]
     validation_result: dict[str, Any]
+    tool_results: dict[str, Any]
+    user_request: str
 
 
 # 5. UTILITÁRIOS
@@ -1296,8 +1298,8 @@ desconhecimento.
 Nunca transforme "desconhecido" em "não".
 
 13. VALIDAÇÃO
-O relatório final será validado automaticamente antes de ser salvo.
-Gere a versão final já aderente a todas as regras, sem depender de uma etapa posterior de reescrita.
+O relatório final será validado automaticamente após a geração.
+Entregue uma versão já consistente com todas as regras desta instrução; não dependa de uma segunda chamada ao LLM para correção.
 """
 
 
@@ -1390,151 +1392,93 @@ def construir_grafo(
     llm_instance: ChatGoogleGenerativeAI,
     tools_list: list,
 ):
-    """
-    Constrói o fluxo agentic:
+    """Orquestra as ferramentas de forma determinística e gera o relatório com uma única chamada ao LLM."""
 
-    START
-      ↓
-    Agent / LLM
-      ↓
-    ToolNode
-      ↓
-    Agent / LLM
-      ↓
-    Output Validator
-      ↓
-    END
+    consultar_metricas_tool, gerar_graficos_tool, buscar_noticias_tool = tools_list
 
-    O validador executa uma checagem determinística e encerra o fluxo.
-    Uma nova chamada ao LLM não é feita após a validação.
-    """
+    def tools_node(state: AgentState) -> dict[str, Any]:
+        logger.info("Executando ferramentas de forma determinística.")
 
-    llm_with_tools = llm_instance.bind_tools(
-        tools_list
-    )
+        metricas = consultar_metricas_tool.invoke({})
+        logger.info("Tool executada: consultar_metricas")
 
-    def agent_node(
-        state: AgentState,
-    ) -> dict[str, Any]:
+        graficos = gerar_graficos_tool.invoke({})
+        logger.info("Tool executada: gerar_graficos")
 
-        mensagens = state["messages"]
-
-        possui_system = any(
-            isinstance(
-                mensagem,
-                SystemMessage,
-            )
-            for mensagem in mensagens
-        )
-
-        if not possui_system:
-
-            mensagens = [
-                SystemMessage(
-                    content=SYSTEM_PROMPT
-                )
-            ] + mensagens
-
-        resposta = llm_with_tools.invoke(
-            mensagens
-        )
+        noticias = buscar_noticias_tool.invoke({"query": NEWS_QUERY})
+        logger.info("Tool executada: buscar_noticias")
 
         return {
-            "messages": [resposta]
-        }
-
-    def route_after_agent(
-        state: AgentState,
-    ) -> str:
-
-        ultimo = state["messages"][-1]
-
-        if (
-            isinstance(ultimo, AIMessage)
-            and ultimo.tool_calls
-        ):
-            return "tools"
-
-        return "validator"
-
-    def validator_node(
-        state: AgentState,
-    ) -> dict[str, Any]:
-
-        ultimo = state["messages"][-1]
-
-        if not isinstance(
-            ultimo,
-            AIMessage,
-        ):
-            return {
-                "validation_result": {
-                    "ok": False,
-                    "problemas": [
-                        "A última mensagem não é uma resposta do agente."
-                    ],
-                }
+            "tool_results": {
+                "consultar_metricas": metricas,
+                "gerar_graficos": graficos,
+                "buscar_noticias": noticias,
             }
-
-        texto = extrair_texto_mensagem(
-            ultimo
-        )
-
-        return {
-            "validation_result": validar_relatorio(texto)
         }
 
-    def route_after_validator(
-        state: AgentState,
-    ) -> str:
-        return END
+    def agent_node(state: AgentState) -> dict[str, Any]:
+        resultados = state.get("tool_results", {})
+        request = state.get("user_request", "")
+        dados = json.dumps(
+            resultados,
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        )
 
-    workflow = StateGraph(
-        AgentState
-    )
+        mensagens = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=request),
+            HumanMessage(
+                content=(
+                    "RESULTADOS DETERMINÍSTICOS DAS FERRAMENTAS:\n\n"
+                    f"{dados}\n\n"
+                    "Gere o relatório final usando exclusivamente esses resultados. "
+                    "Não invente números, fontes, URLs ou períodos."
+                )
+            ),
+        ]
 
-    workflow.add_node(
-        "agent",
-        agent_node,
-    )
+        resposta = llm_instance.invoke(mensagens)
 
-    workflow.add_node(
-        "tools",
-        ToolNode(tools_list),
-    )
+        return {"messages": [resposta]}
 
-    workflow.add_node(
-        "validator",
-        validator_node,
-    )
+    def validator_node(state: AgentState) -> dict[str, Any]:
+        ultimo = state["messages"][-1]
 
-    workflow.add_edge(
-        START,
-        "agent",
-    )
+        if not isinstance(ultimo, AIMessage):
+            resultado = {
+                "ok": False,
+                "problemas": [
+                    "A última mensagem não é uma resposta do agente."
+                ],
+            }
+            logger.error("Output Validator: falha na estrutura da resposta.")
+            return {"validation_result": resultado}
 
-    workflow.add_conditional_edges(
-        "agent",
-        route_after_agent,
-        {
-            "tools": "tools",
-            "validator": "validator",
-        },
-    )
+        texto = extrair_texto_mensagem(ultimo)
+        resultado = validar_relatorio(texto)
 
-    workflow.add_edge(
-        "tools",
-        "agent",
-    )
+        if resultado["ok"]:
+            logger.info("Output Validator: relatório aprovado.")
+        else:
+            logger.error(
+                "Output Validator: relatório reprovado: %s",
+                "; ".join(resultado["problemas"]),
+            )
 
-    workflow.add_conditional_edges(
-        "validator",
-        route_after_validator,
-        {
-            "agent": "agent",
-            END: END,
-        },
-    )
+        return {"validation_result": resultado}
+
+    workflow = StateGraph(AgentState)
+
+    workflow.add_node("tools", tools_node)
+    workflow.add_node("agent", agent_node)
+    workflow.add_node("validator", validator_node)
+
+    workflow.add_edge(START, "tools")
+    workflow.add_edge("tools", "agent")
+    workflow.add_edge("agent", "validator")
+    workflow.add_edge("validator", END)
 
     return workflow.compile()
 
@@ -1687,8 +1631,39 @@ def registrar_auditoria(
 # 16. EXECUÇÃO PRINCIPAL
 
 
-def main() -> None:
+def criar_eventos_auditoria_tools(tool_results: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "event": "tool_execution",
+            "tool": "consultar_metricas",
+            "arguments": {},
+            "result": resumir_resultado_tool(
+                "consultar_metricas",
+                tool_results.get("consultar_metricas", {}),
+            ),
+        },
+        {
+            "event": "tool_execution",
+            "tool": "gerar_graficos",
+            "arguments": {},
+            "result": resumir_resultado_tool(
+                "gerar_graficos",
+                tool_results.get("gerar_graficos", {}),
+            ),
+        },
+        {
+            "event": "tool_execution",
+            "tool": "buscar_noticias",
+            "arguments": {"query": NEWS_QUERY},
+            "result": resumir_resultado_tool(
+                "buscar_noticias",
+                tool_results.get("buscar_noticias", {}),
+            ),
+        },
+    ]
 
+
+def main() -> None:
     run_id = os.urandom(8).hex()
 
     prompt_inicial = (
@@ -1698,37 +1673,22 @@ def main() -> None:
     )
 
     tool_events: list[dict[str, Any]] = []
-
     final_report = None
     final_validation = None
 
     try:
+        logger.info("Run ID: %s", run_id)
 
-        logger.info(
-            "Run ID: %s",
-            run_id,
-        )
+        prompt_inicial = validar_solicitacao(prompt_inicial)
 
-        prompt_inicial = validar_solicitacao(
-            prompt_inicial
-        )
-
-
-        arquivo_2025 = resolver_arquivo(
-            "INFLUD25-14-09-2026.csv"
-        )
-
-        arquivo_2026 = resolver_arquivo(
-            "INFLUD26-14-09-2026.csv"
-        )
-
+        arquivo_2025 = resolver_arquivo("INFLUD25-14-09-2026.csv")
+        arquivo_2026 = resolver_arquivo("INFLUD26-14-09-2026.csv")
 
         preparar_banco_dados(
             arquivo_2025,
             arquivo_2026,
             DB_PATH,
         )
-
 
         llm = configurar_llm()
 
@@ -1738,28 +1698,19 @@ def main() -> None:
             buscar_noticias,
         ]
 
-        app = construir_grafo(
-            llm,
-            tools,
-        )
+        app = construir_grafo(llm, tools)
 
-        logger.info(
-            "Iniciando execução do agente."
-        )
+        logger.info("Iniciando execução do agente.")
 
         inputs = {
             "messages": [
-                HumanMessage(
-                    content=prompt_inicial
-                )
+                HumanMessage(content=prompt_inicial)
             ],
+            "user_request": prompt_inicial,
         }
 
-        seen_messages = set()
-
-        # Limita loops acidentais do agente.
         config = {
-            "recursion_limit": 12
+            "recursion_limit": 6
         }
 
         for output in app.stream(
@@ -1767,159 +1718,45 @@ def main() -> None:
             stream_mode="values",
             config=config,
         ):
+            if output.get("tool_results"):
+                tool_results = output["tool_results"]
+                tool_events = criar_eventos_auditoria_tools(tool_results)
 
-            if output.get(
-                "validation_result"
-            ):
-                final_validation = output[
-                    "validation_result"
-                ]
+            if output.get("validation_result"):
+                final_validation = output["validation_result"]
 
-            mensagens = output.get(
-                "messages",
-                [],
-            )
+            mensagens = output.get("messages", [])
 
             if not mensagens:
                 continue
 
             ultimo = mensagens[-1]
 
-            message_id = getattr(
-                ultimo,
-                "id",
-                None,
-            )
-
-            if message_id is None:
-                message_id = id(
-                    ultimo
-                )
-
-            if message_id in seen_messages:
-                continue
-
-            seen_messages.add(
-                message_id
-            )
-
-
-            if (
-                isinstance(
-                    ultimo,
-                    AIMessage,
-                )
-                and ultimo.tool_calls
-            ):
-
-                for tool_call in ultimo.tool_calls:
-
-                    tool_name = tool_call[
-                        "name"
-                    ]
-
-                    event = {
-                        "event": "tool_call",
-                        "tool": tool_name,
-                        "tool_call_id": tool_call.get(
-                            "id"
-                        ),
-                        "arguments": tool_call.get(
-                            "args",
-                            {},
-                        ),
-                    }
-
-                    tool_events.append(
-                        event
-                    )
-
-                    logger.info(
-                        "Tool acionada: %s",
-                        tool_name,
-                    )
-
-
-            elif isinstance(
-                ultimo,
-                ToolMessage,
-            ):
-
-                tool_name = getattr(
-                    ultimo,
-                    "name",
-                    "unknown",
-                )
-
-                event = {
-                    "event": "tool_result",
-                    "tool": tool_name,
-                    "tool_call_id": getattr(
-                        ultimo,
-                        "tool_call_id",
-                        None,
-                    ),
-                    "result": resumir_resultado_tool(
-                        tool_name,
-                        ultimo.content,
-                    ),
-                }
-
-                tool_events.append(
-                    event
-                )
-
-
-            elif isinstance(
-                ultimo,
-                AIMessage,
-            ):
-
-                texto = extrair_texto_mensagem(
-                    ultimo
-                )
-
+            if isinstance(ultimo, AIMessage):
+                texto = extrair_texto_mensagem(ultimo)
                 if texto.strip():
-
                     final_report = texto
-
-                    logger.info(
-                        "Resposta final do agente recebida."
-                    )
-
+                    logger.info("Resposta final do agente recebida.")
 
         if not final_report:
             raise RuntimeError(
                 "O agente terminou sem produzir um relatório."
             )
 
-        final_validation = validar_relatorio(
-            final_report
-        )
+        final_validation = validar_relatorio(final_report)
 
         if not final_validation["ok"]:
-
             raise RuntimeError(
-                "O relatório final foi reprovado "
-                "pelo Output Validator: "
-                + "; ".join(
-                    final_validation[
-                        "problemas"
-                    ]
-                )
+                "O relatório final foi reprovado pelo Output Validator: "
+                + "; ".join(final_validation["problemas"])
             )
-
 
         REPORT_PATH.write_text(
             final_report,
             encoding="utf-8",
         )
 
-        logger.info(
-            "Relatório salvo em: %s",
-            REPORT_PATH,
-        )
-
+        logger.info("Relatório salvo em: %s", REPORT_PATH)
 
         registrar_auditoria(
             run_id=run_id,
@@ -1930,31 +1767,17 @@ def main() -> None:
             report_path=REPORT_PATH,
         )
 
-
         print("\n" + "=" * 70)
         print("📄 RELATÓRIO FINAL")
         print("=" * 70)
         print(final_report)
         print("=" * 70)
-
-        print(
-            f"\n[*] Relatório: {REPORT_PATH}"
-        )
-
-        print(
-            f"[*] Audit log: {AUDIT_PATH}"
-        )
-
-        print(
-            f"[*] Qualidade dos dados: "
-            f"{DATA_QUALITY_PATH}"
-        )
+        print(f"\n[*] Relatório: {REPORT_PATH}")
+        print(f"[*] Audit log: {AUDIT_PATH}")
+        print(f"[*] Qualidade dos dados: {DATA_QUALITY_PATH}")
 
     except Exception as exc:
-
-        logger.exception(
-            "Falha na execução."
-        )
+        logger.exception("Falha na execução.")
 
         registrar_auditoria(
             run_id=run_id,
