@@ -44,7 +44,7 @@ except ImportError:
 
 
 APP_NAME = "indicium-healthcare-ai-poc"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
 
@@ -60,9 +60,10 @@ ALLOWED_NEWS_DOMAINS = (
 
 NEWS_TIME_LIMIT = os.getenv("NEWS_TIME_LIMIT", "m")
 MAX_NEWS_RESULTS = 3
-
-
-
+NEWS_QUERY = os.getenv(
+    "NEWS_QUERY",
+    "Brasil Ministério da Saúde Fiocruz InfoGripe",
+)
 
 MAX_NEWS_SNIPPET_LENGTH = 800
 ULTIMO_MES_PARCIAL = False
