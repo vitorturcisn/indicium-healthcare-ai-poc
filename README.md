@@ -25,28 +25,25 @@ A fonte oficial utilizada na implementação é o [Portal de Dados Abertos do SU
 
 ## Arquitetura
 
-A versão atual executa as ferramentas de forma determinística e realiza uma única chamada ao Gemini para gerar o relatório a partir dos resultados agregados:
+A versão atual executa as ferramentas de forma determinística e realiza uma única chamada ao Gemini para gerar o relatório a partir dos resultados agregados. Isso reduz chamadas desnecessárias ao LLM e mantém os cálculos críticos fora da geração textual:
 
 ```text
-CSV SRAG
+Solicitação do usuário
    |
    v
-Pandas -> limpeza + seleção de variáveis
-   |
-   v
-SQLite (dados minimizados)
+Input Guardrail
    |
    v
 LangGraph
    +--> consultar_metricas() ----> SQLite
    +--> gerar_graficos() --------> SQLite
-   +--> buscar_noticias() -------> DDGS -> validação de domínio
+   +--> buscar_noticias() -------> DDGS -> allowlist de domínios
    |
    v
 Resultados agregados das tools
    |
    v
-Gemini
+Gemini 3.7 Flash
    |
    v
 Normalização determinística
@@ -54,8 +51,15 @@ Normalização determinística
    v
 Output Validator
    |
-   v
-Artefatos finais + Audit Log
+   +--> aprovado --> Artefatos finais + Audit Log
+   |
+   +--> inválido --> execução encerrada + auditoria
+```
+
+O fluxo de ingestão e preparação dos dados ocorre antes da execução do agente:
+
+```text
+CSV SRAG -> Pandas (limpeza + minimização) -> SQLite
 ```
 
 O LLM não consulta o SQLite livremente e não recebe registros individuais. Ele recebe apenas os resultados agregados das ferramentas.
@@ -138,7 +142,8 @@ Cada execução gera um registro em `audit_log.jsonl` contendo informações com
 - Python **3.10+**;
 - uma chave da API do Google AI Studio/Gemini;
 - os dois arquivos CSV do snapshot utilizado pela PoC;
-- Graphviz instalado como dependência de sistema apenas quando o diagrama PDF for gerado.
+- Graphviz instalado como dependência de sistema quando o diagrama PDF for gerado;
+- no Windows, o executável `dot` do Graphviz precisa estar disponível no `PATH` para gerar o diagrama.
 
 ## Estrutura do repositório
 
@@ -154,7 +159,9 @@ Cada execução gera um registro em `audit_log.jsonl` contendo informações com
 ├── data/
 │   └── arquivos CSV do snapshot (não versionados)
 └── outputs/
-    └── artefatos gerados em execução (não versionados)
+    ├── diagrama_arquitetura.pdf
+    ├── diagrama_arquitetura_png.png
+    └── demais artefatos gerados (não versionados)
 ```
 
 Os arquivos CSV do snapshot e os artefatos gerados são mantidos fora do versionamento. A pasta `outputs/` pode existir no repositório apenas com um `.gitkeep`.
@@ -226,6 +233,89 @@ python indicium_healthcare_ai_poc.py
 ```
 
 Ao terminar, os artefatos serão gravados na pasta `outputs/`.
+
+### 7. Gerar o diagrama de arquitetura
+
+A geração do diagrama é feita pelo arquivo `gerar_diagrama.py` e depende do Graphviz.
+
+#### Windows PowerShell
+
+Instale o Graphviz com o `winget`:
+
+```powershell
+winget install graphviz
+```
+
+Depois, confirme se o executável `dot` está disponível:
+
+```powershell
+dot -V
+```
+
+O resultado esperado é semelhante a:
+
+```text
+dot - graphviz version X.Y.Z
+```
+
+> **Observação:** em algumas instalações do Windows, o Graphviz pode aparecer como instalado, mas o comando `dot` ainda não estar disponível no `PATH`.
+
+Nesse caso, localize o executável. O caminho padrão é:
+
+```text
+C:\Program Files\Graphviz\bin\dot.exe
+```
+
+Você pode verificar com:
+
+```powershell
+Get-ChildItem "C:\Program Files" -Filter dot.exe -Recurse -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty FullName
+```
+
+Se encontrar `C:\Program Files\Graphviz\bin\dot.exe`, adicione o diretório temporariamente ao `PATH` da sessão atual:
+
+```powershell
+$env:Path += ";C:\Program Files\Graphviz\bin"
+dot -V
+```
+
+Para adicionar permanentemente ao `PATH` do usuário:
+
+```powershell
+[Environment]::SetEnvironmentVariable(
+    "Path",
+    [Environment]::GetEnvironmentVariable("Path", "User") + ";C:\Program Files\Graphviz\bin",
+    "User"
+)
+```
+
+Depois, **feche e abra novamente o PowerShell** e confirme:
+
+```powershell
+dot -V
+```
+
+Com o Graphviz configurado, execute:
+
+```powershell
+python gerar_diagrama.py
+```
+
+Esse comando pode ser repetido sempre que a arquitetura for alterada para regenerar o PDF e o PNG.
+
+O script salva os arquivos em:
+
+```text
+outputs/diagrama_arquitetura.pdf
+outputs/diagrama_arquitetura_png.png
+```
+
+Além disso, o PDF é copiado automaticamente para a raiz do projeto:
+
+```text
+diagrama_arquitetura.pdf
+```
 
 ## Como executar no Google Colab
 
@@ -299,24 +389,7 @@ Caso o script esteja no diretório de trabalho atual:
 !python gerar_diagrama.py
 ```
 
-## Geração do diagrama de arquitetura
-
-A geração do diagrama foi separada da aplicação principal para manter o código de produção independente da ferramenta Graphviz.
-
-Execute:
-
-```bash
-python gerar_diagrama.py
-```
-
-São gerados:
-
-```text
-outputs/diagrama_arquitetura.pdf
-outputs/diagrama_arquitetura_png.png
-```
-
-O arquivo PDF pode ser movido para a raiz do repositório caso você queira apresentá-lo diretamente no GitHub.
+O script gera `outputs/diagrama_arquitetura.pdf` e `outputs/diagrama_arquitetura_png.png`, além de copiar o PDF para a raiz do projeto.
 
 ## Artefatos gerados
 
@@ -355,7 +428,7 @@ O Output Validator é determinístico e independente do julgamento livre do LLM.
 
 ### Auditoria
 
-O `audit_log.jsonl` registra a execução e o resultado da validação, permitindo rastrear quais ferramentas foram acionadas e qual foi o resultado resumido de cada etapa.
+O `audit_log.jsonl` registra a execução e o resultado da validação, permitindo rastrear a versão da aplicação, o modelo utilizado, as ferramentas acionadas, resultados resumidos, normalizações aplicadas e o status final, sem armazenar registros individuais de pacientes.
 
 ## Qualidade dos dados e interpretação
 
