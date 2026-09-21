@@ -1,360 +1,356 @@
-import graphviz
+# -*- coding: utf-8 -*-
+"""Gera o diagrama de arquitetura da PoC SRAG.
+
+Funciona no Windows e no Google Colab.
+Os arquivos são salvos na pasta ``outputs/`` do repositório e o PDF também
+é copiado para a raiz do projeto.
+"""
+
 from pathlib import Path
+import shutil
 
-OUTPUT_DIR = Path("/content/outputs")
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+import graphviz
 
-dot = graphviz.Digraph(
-    comment="Arquitetura do Agente SRAG",
-    format="pdf"
-)
 
-dot.attr(
-    rankdir="TB",
-    size="11,14",
-    fontname="Helvetica",
-    nodesep="0.6",
-    ranksep="0.8",
-    bgcolor="white"
-)
+def get_project_dir() -> Path:
+    """Retorna a pasta do projeto com base na localização do script."""
+    try:
+        return Path(__file__).resolve().parent
+    except NameError:
+        return Path.cwd()
 
-dot.attr(
-    "node",
-    fontname="Helvetica",
-    fontsize="11",
-    margin="0.15,0.10"
-)
 
-dot.attr(
-    "edge",
-    fontname="Helvetica",
-    fontsize="9"
-)
+def build_diagram() -> graphviz.Digraph:
+    """Constrói o diagrama alinhado à arquitetura da versão 1.2.2."""
+    dot = graphviz.Digraph(
+        comment="Arquitetura da PoC SRAG",
+        format="pdf",
+        engine="dot",
+    )
 
-# ============================================================
-# ENTRADA E PROCESSAMENTO
-# ============================================================
+    dot.attr(
+        rankdir="TB",
+        bgcolor="white",
+        pad="0.3",
+        nodesep="0.55",
+        ranksep="0.75",
+        fontname="Helvetica",
+        splines="ortho",
+    )
 
-dot.node(
-    "CSV",
-    "Arquivos CSV SRAG\nINFLUD25 + INFLUD26",
-    shape="folder",
-    style="filled",
-    fillcolor="#D9EAF7"
-)
+    dot.attr(
+        "node",
+        fontname="Helvetica",
+        fontsize="10",
+        margin="0.15,0.10",
+    )
 
-dot.node(
-    "PROC",
-    "Pandas\nLeitura, limpeza e minimização",
-    shape="box",
-    style="filled",
-    fillcolor="#D9EAD3"
-)
+    dot.attr(
+        "edge",
+        fontname="Helvetica",
+        fontsize="8",
+    )
 
-dot.node(
-    "DB",
-    "SQLite\nsrag_dados.db\n(Dados minimizados)",
-    shape="cylinder",
-    style="filled",
-    fillcolor="#EAD1DC"
-)
+    # Dados e preparação
+    with dot.subgraph(name="cluster_data") as data:
+        data.attr(
+            label="Dados e preparação",
+            color="#B7B7B7",
+            style="rounded",
+            fontname="Helvetica-Bold",
+        )
 
-dot.edge("CSV", "PROC")
-dot.edge("PROC", "DB")
+        data.node(
+            "CSV",
+            "Arquivos CSV SRAG\nINFLUD25 + INFLUD26",
+            shape="note",
+            style="filled",
+            fillcolor="#D9EAF7",
+        )
 
-# ============================================================
-# AGENTE
-# ============================================================
+        data.node(
+            "PROC",
+            "Pandas\nLeitura, limpeza e minimização",
+            shape="box",
+            style="filled",
+            fillcolor="#D9EAD3",
+        )
 
-dot.node(
-    "USER",
-    "Solicitação\npara o agente",
-    shape="ellipse",
-    style="filled",
-    fillcolor="#D9EAD3"
-)
+        data.node(
+            "DB",
+            "SQLite\nsrag_dados.db\nDados minimizados",
+            shape="cylinder",
+            style="filled",
+            fillcolor="#EAD1DC",
+        )
 
-dot.node(
-    "INPUT",
-    "Input Guardrail\n(Bloqueio de PII)",
-    shape="note",
-    style="filled",
-    fillcolor="#FCE5CD"
-)
+        data.edge("CSV", "PROC")
+        data.edge("PROC", "DB")
 
-dot.node(
-    "LG",
-    "LangGraph\nOrquestrador Agentic",
-    shape="box",
-    style="filled",
-    fillcolor="#FFF2CC",
-    fontname="Helvetica-Bold"
-)
+    # Entrada e guardrail
+    dot.node(
+        "USER",
+        "Solicitação do usuário",
+        shape="ellipse",
+        style="filled",
+        fillcolor="#D9EAD3",
+    )
 
-dot.node(
-    "LLM",
-    "Google Gemini\nGemini 3.6 Flash\n(System Prompt + Contexto)",
-    shape="box",
-    style="filled",
-    fillcolor="#C9DAF8"
-)
+    dot.node(
+        "INPUT",
+        "Input Guardrail\nProteção contra PII\nValidação da solicitação",
+        shape="note",
+        style="filled",
+        fillcolor="#FCE5CD",
+    )
 
-dot.edge("USER", "INPUT")
-dot.edge("INPUT", "LG")
-dot.edge("LG", "LLM", label=" Pensa / Decide")
-dot.edge("LLM", "LG")
+    dot.edge("USER", "INPUT")
+    dot.edge("INPUT", "TOOLS")
 
-# ============================================================
-# TOOLS
-# ============================================================
+    # Orquestração determinística
+    dot.node(
+        "TOOLS",
+        "LangGraph\nOrquestração da execução",
+        shape="box",
+        style="filled",
+        fillcolor="#FFF2CC",
+        fontname="Helvetica-Bold",
+    )
 
-dot.node(
-    "T1",
-    "Tool: consultar_metricas()\n"
-    "Cálculos determinísticos\n"
-    "SQL restrito",
-    shape="component",
-    style="filled",
-    fillcolor="#FCE5CD"
-)
+    dot.node(
+        "T1",
+        "consultar_metricas()\nCálculos determinísticos\nSQL agregado/restrito",
+        shape="box",
+        style="filled",
+        fillcolor="#FCE5CD",
+    )
 
-dot.node(
-    "T2",
-    "Tool: gerar_graficos()\n"
-    "Matplotlib\n"
-    "30 dias / 12 meses",
-    shape="component",
-    style="filled",
-    fillcolor="#FCE5CD"
-)
+    dot.node(
+        "T2",
+        "gerar_graficos()\nMatplotlib\n30 dias + 12 meses",
+        shape="box",
+        style="filled",
+        fillcolor="#FCE5CD",
+    )
 
-dot.node(
-    "T3",
-    "Tool: buscar_noticias()\n"
-    "Busca web + validação\n"
-    "de domínio institucional",
-    shape="component",
-    style="filled",
-    fillcolor="#FCE5CD"
-)
+    dot.node(
+        "T3",
+        "buscar_noticias()\nBusca web + allowlist\nFontes institucionais",
+        shape="box",
+        style="filled",
+        fillcolor="#FCE5CD",
+    )
 
-dot.edge("LG", "T1")
-dot.edge("LG", "T2")
-dot.edge("LG", "T3")
+    dot.edge("TOOLS", "T1")
+    dot.edge("TOOLS", "T2")
+    dot.edge("TOOLS", "T3")
 
-dot.edge(
-    "T1",
-    "DB",
-    label=" Consulta agregada"
-)
+    dot.edge("T1", "DB", label="consulta")
+    dot.edge("DB", "T1", label="agregados")
+    dot.edge("T2", "DB", label="consulta")
+    dot.edge("DB", "T2", label="séries")
 
-dot.edge(
-    "T1",
-    "LG",
-    label=" Retorna métricas"
-)
+    # Busca web
+    dot.node(
+        "WEB",
+        "DuckDuckGo\nBusca contextual",
+        shape="ellipse",
+        style="filled",
+        fillcolor="#EAD1DC",
+    )
 
-dot.edge(
-    "T2",
-    "LG",
-    label=" Retorna gráficos"
-)
+    dot.node(
+        "SOURCES",
+        "Allowlist de domínios\n"
+        "gov.br\n"
+        "fiocruz.br\n"
+        "who.int",
+        shape="box",
+        style="filled",
+        fillcolor="#D9EAF7",
+    )
 
-dot.edge(
-    "T3",
-    "LG",
-    label=" Retorna contexto"
-)
+    dot.edge("T3", "WEB")
+    dot.edge("WEB", "SOURCES", label="resultados")
+    dot.edge("SOURCES", "T3", label="URLs validadas")
 
-# ============================================================
-# WEB
-# ============================================================
+    dot.edge("T1", "TOOLS", label="métricas")
+    dot.edge("T2", "TOOLS", label="gráficos")
+    dot.edge("T3", "TOOLS", label="contexto")
 
-dot.node(
-    "WEB",
-    "DuckDuckGo\nBusca contextual",
-    shape="cloud",
-    style="filled",
-    fillcolor="#EAD1DC"
-)
+    # LLM
+    dot.node(
+        "LLM",
+        "Google Gemini 3.7 Flash\n"
+        "Análise e geração textual\n"
+        "System Prompt + resultados das tools",
+        shape="box",
+        style="filled",
+        fillcolor="#C9DAF8",
+        fontname="Helvetica-Bold",
+    )
 
-dot.node(
-    "SOURCES",
-    "Fontes permitidas\n"
-    "gov.br\n"
-    "fiocruz.br\n"
-    "who.int",
-    shape="box",
-    style="filled",
-    fillcolor="#D9EAF7"
-)
+    dot.edge("TOOLS", "LLM", label="resultados determinísticos")
 
-dot.edge("T3", "WEB")
-dot.edge("WEB", "SOURCES", label=" Filtra / valida")
-dot.edge("SOURCES", "T3")
+    # Normalização + validação
+    dot.node(
+        "NORM",
+        "Normalização determinística\n"
+        "Ex.: observação de mês parcial",
+        shape="box",
+        style="filled",
+        fillcolor="#FFF2CC",
+    )
 
-# ============================================================
-# INTEGRAÇÕES FUTURAS
-# ============================================================
+    dot.node(
+        "VAL",
+        "Output Validator\n"
+        "Checa estrutura, terminologia\n"
+        "e coerência metodológica",
+        shape="octagon",
+        style="filled",
+        fillcolor="#F4CCCC",
+        fontname="Helvetica-Bold",
+    )
 
-dot.node(
-    "CNES",
-    "Integração futura: CNES\n"
-    "Capacidade / leitos de UTI",
-    shape="box",
-    style="dashed,filled",
-    fillcolor="#F3F3F3"
-)
+    dot.edge("LLM", "NORM")
+    dot.edge("NORM", "VAL")
 
-dot.node(
-    "PNI",
-    "Integração futura: PNI\n"
-    "Cobertura vacinal populacional",
-    shape="box",
-    style="dashed,filled",
-    fillcolor="#F3F3F3"
-)
+    # Integrações futuras
+    dot.node(
+        "CNES",
+        "Integração futura: CNES\n"
+        "Capacidade / leitos de UTI",
+        shape="box",
+        style="dashed,filled",
+        fillcolor="#F3F3F3",
+    )
 
-dot.edge("CNES", "T1", style="dashed")
-dot.edge("PNI", "T1", style="dashed")
+    dot.node(
+        "PNI",
+        "Integração futura: PNI\n"
+        "Cobertura vacinal populacional",
+        shape="box",
+        style="dashed,filled",
+        fillcolor="#F3F3F3",
+    )
 
-# ============================================================
-# VALIDAÇÃO
-# ============================================================
+    dot.edge("CNES", "T1", style="dashed", label="futuro")
+    dot.edge("PNI", "T1", style="dashed", label="futuro")
 
-dot.node(
-    "VAL",
-    "Output Validator\n"
-    "Validação determinística\n"
-    "metodológica",
-    shape="octagon",
-    style="filled",
-    fillcolor="#F4CCCC",
-    fontname="Helvetica-Bold"
-)
+    # Saídas
+    dot.node(
+        "OUT",
+        "Artefatos aprovados",
+        shape="box",
+        style="filled",
+        fillcolor="#D9EAD3",
+        fontname="Helvetica-Bold",
+    )
 
-dot.edge(
-    "LG",
-    "VAL",
-    label=" Valida relatório"
-)
+    dot.node(
+        "REPORT",
+        "relatorio_final.md\nRelatório epidemiológico",
+        shape="note",
+        style="filled",
+        fillcolor="#D9EAD3",
+    )
 
-dot.edge(
-    "VAL",
-    "LLM",
-    style="dashed",
-    label=" Corrigir / Refazer"
-)
+    dot.node(
+        "G30",
+        "grafico_30_dias.png\nCasos diários",
+        shape="note",
+        style="filled",
+        fillcolor="#D9EAD3",
+    )
 
-# ============================================================
-# SAÍDAS
-# ============================================================
+    dot.node(
+        "G12",
+        "grafico_12_meses.png\nCasos mensais",
+        shape="note",
+        style="filled",
+        fillcolor="#D9EAD3",
+    )
 
-dot.node(
-    "OUT",
-    "Artefatos Gerados",
-    shape="box",
-    style="filled",
-    fillcolor="#D9EAD3",
-    fontname="Helvetica-Bold"
-)
+    dot.node(
+        "QUALITY",
+        "qualidade_dados.json\nQualidade/completude",
+        shape="note",
+        style="filled",
+        fillcolor="#D9D2E9",
+    )
 
-dot.node(
-    "REPORT",
-    "relatorio_final.md\n"
-    "Relatório epidemiológico",
-    shape="note",
-    style="filled",
-    fillcolor="#D9EAD3"
-)
+    dot.node(
+        "AUDIT",
+        "audit_log.jsonl\nAuditoria da execução",
+        shape="note",
+        style="filled",
+        fillcolor="#D9D2E9",
+    )
 
-dot.node(
-    "G30",
-    "grafico_30_dias.png\n"
-    "Casos diários",
-    shape="note",
-    style="filled",
-    fillcolor="#D9EAD3"
-)
+    dot.edge("VAL", "OUT", label="aprovado")
+    dot.edge("OUT", "REPORT")
+    dot.edge("OUT", "G30")
+    dot.edge("OUT", "G12")
+    dot.edge("OUT", "QUALITY")
+    dot.edge("OUT", "AUDIT")
 
-dot.node(
-    "G12",
-    "grafico_12_meses.png\n"
-    "Casos mensais",
-    shape="note",
-    style="filled",
-    fillcolor="#D9EAD3"
-)
+    # Governança
+    dot.node(
+        "SAFE",
+        "Governança e guardrails\n"
+        "• Minimização de dados\n"
+        "• Proteção contra PII\n"
+        "• Prompt Injection protection\n"
+        "• Allowlist de fontes\n"
+        "• Validação determinística\n"
+        "• Auditoria sem registros individuais",
+        shape="box",
+        style="filled",
+        fillcolor="#E6E6E6",
+        fontname="Helvetica-Bold",
+    )
 
-dot.node(
-    "QUALITY",
-    "qualidade_dados.json\n"
-    "Qualidade dos dados",
-    shape="note",
-    style="filled",
-    fillcolor="#D9D2E9"
-)
+    dot.edge("SAFE", "INPUT", style="dashed")
+    dot.edge("SAFE", "T3", style="dashed")
+    dot.edge("SAFE", "VAL", style="dashed")
+    dot.edge("SAFE", "AUDIT", style="dashed")
 
-dot.node(
-    "AUDIT",
-    "audit_log.jsonl\n"
-    "Auditoria da execução",
-    shape="note",
-    style="filled",
-    fillcolor="#D9D2E9"
-)
+    return dot
 
-dot.edge("VAL", "OUT", label=" Aprovado")
 
-dot.edge("OUT", "REPORT")
-dot.edge("OUT", "G30")
-dot.edge("OUT", "G12")
-dot.edge("OUT", "QUALITY")
-dot.edge("OUT", "AUDIT")
+def main() -> None:
+    project_dir = get_project_dir()
+    output_dir = project_dir / "outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-# ============================================================
-# GUARDRAILS
-# ============================================================
+    dot = build_diagram()
 
-dot.node(
-    "SAFE",
-    "Guardrails e Boas Práticas\n"
-    "• Proteção contra PII\n"
-    "• Dados minimizados\n"
-    "• API Key via Secret / ambiente\n"
-    "• Validação de domínio\n"
-    "• Output Validator\n"
-    "• Auditoria\n"
-    "• Prompt Injection protection",
-    shape="box",
-    style="filled",
-    fillcolor="#E6E6E6",
-    fontname="Helvetica-Bold"
-)
+    pdf_output = dot.render(
+        filename=str(output_dir / "diagrama_arquitetura"),
+        format="pdf",
+        cleanup=True,
+    )
 
-dot.edge("SAFE", "INPUT", style="dashed")
-dot.edge("SAFE", "T3", style="dashed")
-dot.edge("SAFE", "VAL", style="dashed")
-dot.edge("SAFE", "AUDIT", style="dashed")
+    png_output = dot.render(
+        filename=str(output_dir / "diagrama_arquitetura_png"),
+        format="png",
+        cleanup=True,
+    )
 
-# ============================================================
-# RENDER
-# ============================================================
+    # Cópia do PDF na raiz para facilitar a publicação no GitHub.
+    root_pdf = project_dir / "diagrama_arquitetura.pdf"
+    shutil.copy2(pdf_output, root_pdf)
 
-pdf_path = dot.render(
-    str(OUTPUT_DIR / "diagrama_arquitetura"),
-    cleanup=True
-)
+    print("=" * 70)
+    print("DIAGRAMA GERADO COM SUCESSO")
+    print("=" * 70)
+    print(f"Projeto:   {project_dir}")
+    print(f"PDF:       {pdf_output}")
+    print(f"PNG:       {png_output}")
+    print(f"PDF raiz:  {root_pdf}")
+    print("=" * 70)
 
-png_path = dot.render(
-    str(OUTPUT_DIR / "diagrama_arquitetura_png"),
-    format="png",
-    cleanup=True
-)
 
-print("=" * 70)
-print("DIAGRAMA GERADO COM SUCESSO")
-print("=" * 70)
-print(f"PDF: {pdf_path}")
-print(f"PNG: {png_path}")
-print("=" * 70)
+if __name__ == "__main__":
+    main()
