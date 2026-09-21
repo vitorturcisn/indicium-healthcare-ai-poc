@@ -2,6 +2,9 @@
 
 > Proof of Concept (PoC) de Inteligência Artificial Generativa para análise de indicadores de Síndrome Respiratória Aguda Grave (SRAG), busca contextual em fontes institucionais e geração automatizada de relatórios.
 
+**Versão da aplicação:** 1.2.2  
+**Modelo padrão:** `gemini-3.7-flash` (configurável por `GEMINI_MODEL`).
+
 ## Sobre o projeto
 
 Esta PoC implementa um agente de IA para apoiar o monitoramento epidemiológico de SRAG a partir de um snapshot dos dados públicos do Sistema de Informação da Vigilância Epidemiológica da Gripe (Sivep-Gripe), disponibilizados pelo Ministério da Saúde.
@@ -11,8 +14,8 @@ A solução combina:
 - **Pandas** para leitura, limpeza e minimização dos dados;
 - **SQLite** para armazenamento analítico local;
 - **LangGraph** para orquestração do fluxo agentic;
-- **Google Gemini** para raciocínio e geração do relatório;
-- **Tool Calling** para separar raciocínio de cálculos determinísticos;
+- **Google Gemini** para análise textual e geração do relatório;
+- **Ferramentas determinísticas** para separar cálculos e busca contextual da geração textual;
 - **Matplotlib** para geração dos gráficos;
 - **DDGS** para busca contextual na web, com validação do domínio das URLs;
 - **Output Validator** para verificar o relatório antes da gravação;
@@ -22,7 +25,7 @@ A fonte oficial utilizada na implementação é o [Portal de Dados Abertos do SU
 
 ## Arquitetura
 
-O fluxo principal é:
+A versão atual executa as ferramentas de forma determinística e realiza uma única chamada ao Gemini para gerar o relatório a partir dos resultados agregados:
 
 ```text
 CSV SRAG
@@ -33,25 +36,29 @@ Pandas -> limpeza + seleção de variáveis
    v
 SQLite (dados minimizados)
    |
-   +-----------------------------+
-   |                             |
-   v                             |
-LangGraph <-> Gemini             |
-   |                             |
-   +--> consultar_metricas() ----+--> SQLite
-   |
-   +--> gerar_graficos() --------+--> SQLite
-   |
+   v
+LangGraph
+   +--> consultar_metricas() ----> SQLite
+   +--> gerar_graficos() --------> SQLite
    +--> buscar_noticias() -------> DDGS -> validação de domínio
+   |
+   v
+Resultados agregados das tools
+   |
+   v
+Gemini
+   |
+   v
+Normalização determinística
    |
    v
 Output Validator
    |
-   +--> correção/reflexão quando necessário
-   |
    v
 Artefatos finais + Audit Log
 ```
+
+O LLM não consulta o SQLite livremente e não recebe registros individuais. Ele recebe apenas os resultados agregados das ferramentas.
 
 O diagrama completo está disponível em `diagrama_arquitetura.pdf`.
 
@@ -118,13 +125,13 @@ O relatório final passa por validação determinística para verificar:
 - ausência de rótulos proibidos;
 - ausência de conclusões inadequadas;
 - menção explícita a mês parcial quando aplicável;
-- presença das URLs retornadas pela busca.
+- presença de URLs no relatório.
 
-Quando a primeira versão é reprovada, o fluxo pode retornar ao agente para uma nova geração, respeitando o limite configurado de tentativas.
+Antes da validação, uma etapa de normalização determinística pode acrescentar informações objetivas que estejam faltando, como a identificação do último mês parcial. O validator não aciona uma nova chamada ao Gemini; quando a saída permanece inválida, a execução é encerrada e registrada como erro.
 
 ### 6. Auditoria
 
-Cada execução gera um registro em `audit_log.jsonl` contendo informações como ID da execução, timestamp, modelo, tools acionadas, resultados resumidos e resultado da validação. O objetivo é manter rastreabilidade sem armazenar desnecessariamente grandes volumes de conteúdo externo ou registros individuais.
+Cada execução gera um registro em `audit_log.jsonl` contendo informações como ID da execução, timestamp, versão da aplicação, modelo, tools acionadas, resultados resumidos, normalizações aplicadas e resultado da validação. O objetivo é manter rastreabilidade sem armazenar desnecessariamente grandes volumes de conteúdo externo ou registros individuais.
 
 ## Requisitos
 
@@ -189,13 +196,14 @@ pip install -r requirements.txt
 Linux/macOS:
 
 ```bash
-export GOOGLE_API_KEY="SUA_CHAVE_AQUI"
+read -s GOOGLE_API_KEY
+export GOOGLE_API_KEY
 ```
 
 Windows PowerShell:
 
 ```powershell
-$env:GOOGLE_API_KEY="SUA_CHAVE_AQUI"
+$env:GOOGLE_API_KEY = Read-Host "Digite sua GOOGLE_API_KEY"
 ```
 
 A aplicação também reconhece `GOOGLE_API_KEY` já presente no ambiente e, quando executada no Google Colab, consegue utilizar o sistema de Secrets do Colab.
@@ -343,7 +351,7 @@ O código não confia apenas no operador `site:` da busca. O hostname real das U
 
 ### Validação do relatório
 
-O Output Validator é determinístico e independente do julgamento livre do LLM. Falhas de estrutura ou terminologia podem disparar uma nova geração antes da gravação final.
+O Output Validator é determinístico e independente do julgamento livre do LLM. Antes da validação, uma etapa de normalização determinística pode acrescentar informações objetivas que estejam faltando, como a identificação do último mês parcial. Se a saída permanecer inválida, a execução é encerrada e registrada como erro.
 
 ### Auditoria
 
