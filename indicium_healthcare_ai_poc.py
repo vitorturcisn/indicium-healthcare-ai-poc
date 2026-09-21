@@ -44,7 +44,7 @@ except ImportError:
 
 
 APP_NAME = "indicium-healthcare-ai-poc"
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.2.2"
 
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
 
@@ -1298,13 +1298,68 @@ desconhecimento.
 
 Nunca transforme "desconhecido" em "não".
 
-13. VALIDAÇÃO
+13. ÚLTIMO MÊS PARCIAL
+Quando a ferramenta informar `mes_final_parcial = true`, use literalmente
+as expressões "último mês parcial" ou "mês parcial" e informe a data de corte.
+
+14. VALIDAÇÃO
 O relatório final será validado automaticamente após a geração.
 Entregue uma versão já consistente com todas as regras desta instrução; não dependa de uma segunda chamada ao LLM para correção.
 """
 
 
 # 13. VALIDAÇÃO DETERMINÍSTICA DO RELATÓRIO
+
+
+def normalizar_relatorio(
+    texto: str,
+    tool_results: dict[str, Any],
+) -> tuple[str, bool]:
+    """Aplica ajustes determinísticos antes da validação final."""
+    graficos = tool_results.get("gerar_graficos", {})
+
+    if not graficos.get("mes_final_parcial"):
+        return texto, False
+
+    if "mês parcial" in texto.lower():
+        return texto, False
+
+    metricas = tool_results.get("consultar_metricas", {})
+    periodo = metricas.get("periodo_dados", {})
+    data_corte = periodo.get("fim")
+
+    mes_ano = None
+    if data_corte:
+        try:
+            mes_ano = pd.to_datetime(data_corte).strftime("%m/%Y")
+        except Exception:
+            pass
+
+    if mes_ano:
+        observacao = (
+            f"**Observação:** o último mês parcial ({mes_ano}) possui "
+            f"dados disponíveis até {data_corte}."
+        )
+    else:
+        observacao = (
+            "**Observação:** o último mês parcial possui dados "
+            "disponíveis até a última observação registrada."
+        )
+
+    marcador = "### Casos — últimos 12 meses"
+    if marcador in texto:
+        texto = texto.replace(
+            marcador,
+            f"{marcador}\n\n{observacao}",
+            1,
+        )
+    else:
+        texto = f"{texto.rstrip()}\n\n{observacao}\n"
+
+    logger.info(
+        "Normalização determinística: observação de mês parcial adicionada."
+    )
+    return texto, True
 
 
 REQUIRED_REPORT_ELEMENTS = [
@@ -1742,6 +1797,20 @@ def main() -> None:
         if not final_report:
             raise RuntimeError(
                 "O agente terminou sem produzir um relatório."
+            )
+
+        final_report, normalizado = normalizar_relatorio(
+            final_report,
+            tool_results,
+        )
+
+        if normalizado:
+            tool_events.append(
+                {
+                    "event": "postprocess",
+                    "step": "normalizacao_deterministica",
+                    "reason": "Garantir observação explícita de último mês parcial.",
+                }
             )
 
         final_validation = validar_relatorio(final_report)
